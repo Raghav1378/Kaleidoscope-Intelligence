@@ -1,0 +1,10 @@
+langchain_groq
+langchain_openai
+langchain_google_genai
+aiogram
+python-dotenv
+aiogram
+langchain-groq
+langchain
+python-dotenv
+aiohttp
