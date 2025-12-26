@@ -2,6 +2,8 @@
 
 > *"People live their lives bound by what they accept as correct and true. That is how they define 'Reality'."*
 
+[![Telegram Bot](https://img.shields.io/badge/Telegram-@Uchiha_Crow_Bot-blue?style=for-the-badge&logo=telegram)](https://t.me/Uchiha_Crow_Bot)
+
 A sophisticated Telegram Bot powered by **Llama 3.1 (via Groq)** and **LangChain**. It features dual-personality modes: a philosophical conversationalist and a technical code reviewer ("Sharingan Mode").
 
 Built by **Raghav Ramani** as a showcase of Generative AI integration, State Management, and Async Python architecture.
