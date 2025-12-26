@@ -72,3 +72,24 @@ GROQ_API_KEY=your_groq_api_key_here
 ```Bash
 python bot.py
 ```
+
+6. ** Usage Commands **
+
+```Bash
+/start - Start the bot
+/help - Get help
+/founder - Get information about the founder
+/sharingan - Activate Sharingan mode
+/normal - Activate normal mode
+/clear - Clear memory
+/broadcast - Broadcast a message to all users
+```
+
+7. **Founder**
+**Raghav Ramani**
+
+**Role:** 4th-Year B.Tech CSE (AI & ML Specialization)
+
+**Institution:** JECRC University
+
+**Focus:** Generative AI, RAG Systems, MLOps.
