@@ -1,181 +1,176 @@
 import streamlit as st
 import os
 import pandas as pd
+from sqlalchemy import create_engine
 from dotenv import load_dotenv
 
-# LangChain Imports
+# LangChain Core & Specialized Imports
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
 from langchain.chains import create_sql_query_chain
-# FIX: Updated import to resolve Deprecation Warning
 from langchain_community.tools import QuerySQLDatabaseTool 
-from sqlalchemy import create_engine
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, FewShotChatMessagePromptTemplate
 
-# 1. PAGE SETUP
-st.set_page_config(page_title="Prism-SQL", page_icon="💎", layout="wide")
+# 1. PAGE CONFIGURATION
+st.set_page_config(
+    page_title="Prism-SQL | Enterprise AI", 
+    page_icon="💎", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# 2. SIDEBAR - API KEY INPUT
-st.sidebar.title("🔑 Configuration")
-st.sidebar.markdown("Enter your Groq API Key below to activate the agent.")
+# Custom CSS for a sleek "Agentic" look
+st.markdown("""
+    <style>
+    .main { background-color: #f8f9fa; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
+    .stTextInput>div>div>input { border-radius: 5px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# A. User Input (Highest Priority)
-user_api_key = st.sidebar.text_input("Groq API Key", type="password", placeholder="gsk_...")
-
-# B. Auto-Load from Secrets/Env (Fallback)
-default_api_key = None
-try:
-    default_api_key = st.secrets["GROQ_API_KEY"]
-except (FileNotFoundError, KeyError):
+# 2. SIDEBAR - SECURE CONFIGURATION
+with st.sidebar:
+    st.title("💎 Prism-SQL")
+    st.caption("Advanced NLP-to-SQL Engine")
+    st.divider()
+    
+    st.subheader("🔑 Configuration")
+    user_api_key = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
+    
+    # Load Key logic
+    default_api_key = None
     try:
+        default_api_key = st.secrets["GROQ_API_KEY"]
+    except:
         load_dotenv()
         default_api_key = os.getenv("GROQ_API_KEY")
-    except:
-        pass
+    
+    groq_api_key = user_api_key if user_api_key else default_api_key
 
-# C. Final Key Selection
-groq_api_key = user_api_key if user_api_key else default_api_key
+    if not groq_api_key:
+        st.warning("⚠️ Please provide an API Key to proceed.")
+        st.stop()
+    
+    st.success("API Key Active")
+    st.divider()
 
-# 3. STOP IF NO KEY
-if not groq_api_key:
-    st.info("ℹ️ **To get started:** Please paste your Groq API Key in the sidebar.")
-    st.markdown("""
-    **Don't have a key?** 1. Go to [Groq Console](https://console.groq.com/keys) (It's free!)  
-    2. Create a new API Key.  
-    3. Paste it here.
-    """)
-    st.stop()
-
-# 4. DATABASE SETUP
+# 3. DATABASE SETUP
 db_path = "student.db"
-
 if not os.path.exists(db_path):
-    st.error(f"❌ Database file '{db_path}' not found! Please ensure 'student.db' is in the repository.")
+    st.error("❌ student.db not found in the root directory.")
     st.stop()
 
-# Connection String
 db_uri = f"sqlite:///{db_path}"
 db = SQLDatabase.from_uri(db_uri)
+engine = create_engine(db_uri)
 
-# 5. SESSION STATE (History)
-if "history" not in st.session_state:
-    st.session_state.history = []
+# 4. PROMPT ENGINEERING (Few-Shot Strategy)
+examples = [
+    {"input": "Top 5 students?", "query": "SELECT Name, Marks FROM STUDENT ORDER BY Marks DESC LIMIT 5;"},
+    {"input": "Avg marks in Section A", "query": "SELECT AVG(Marks) AS Average_Marks FROM STUDENT WHERE Section = 'A';"},
+    {"input": "Count students by section", "query": "SELECT Section, COUNT(ID) AS Student_Count FROM STUDENT GROUP BY Section;"}
+]
 
-# 6. SIDEBAR - DB INFO
-st.sidebar.markdown("---")
-st.sidebar.title("📂 Database Schema")
-try:
-    table_info = db.get_table_info()
-    st.sidebar.code(table_info, language="sql")
-except Exception as e:
-    st.sidebar.error(f"Error reading table info: {e}")
+example_prompt = ChatPromptTemplate.from_messages([("human", "{input}"), ("ai", "{query}")])
+few_shot_prompt = FewShotChatMessagePromptTemplate(example_prompt=example_prompt, examples=examples)
 
-st.sidebar.subheader("🕒 Query History")
-if st.session_state.history:
-    for i, (q, sql) in enumerate(reversed(st.session_state.history[-5:])):
-        st.sidebar.text(f"Q: {q}")
-        st.sidebar.code(sql, language="sql")
-else:
-    st.sidebar.text("No history yet.")
+# FIXED: Added {table_info} and {top_k} to satisfy the create_sql_query_chain requirements
+final_prompt = ChatPromptTemplate.from_messages([
+    ("system", """You are a SQLite expert. Given an input question, create a syntactically correct SQLite query to run.
+    Unless the user specifies a specific number of examples they wish to obtain, always limit your query to at most {top_k} results.
+    You can order the results by a relevant column to return the most interesting examples in the database.
+    Never query for all the columns from a specific table, only ask for the relevant columns given the question.
+    
+    Only use the following tables:
+    {table_info}
+    
+    Return ONLY raw SQL. No markdown. Use 'AS' for naming calculated columns."""),
+    few_shot_prompt,
+    ("human", "{input}"),
+])
 
-# 7. INITIALIZE AGENT
-try:
-    llm = ChatGroq(
-        groq_api_key=groq_api_key, 
-        model_name="llama-3.1-8b-instant", 
-        temperature=0
-    )
-    generate_query = create_sql_query_chain(llm, db)
-    # FIX: Updated class name to QuerySQLDatabaseTool (capital 'D', lowercase 'b')
-    execute_query = QuerySQLDatabaseTool(db=db)
-except Exception as e:
-    st.error(f"❌ Error initializing AI: {e}")
-    st.stop()
+# 5. INITIALIZE AGENT
+@st.cache_resource
+def get_agent(_api_key):
+    llm = ChatGroq(groq_api_key=_api_key, model_name="llama-3.1-8b-instant", temperature=0)
+    gen_chain = create_sql_query_chain(llm, db, prompt=final_prompt)
+    exec_tool = QuerySQLDatabaseTool(db=db)
+    return gen_chain, exec_tool
 
-# 8. MAIN UI
-st.title("💎 Prism-SQL: Enterprise Database Agent")
-st.markdown("""
-> *Translate plain English into powerful SQL queries.* > **Try:** "Show me the top 5 students by marks", "Who failed in Section A?", or "Average marks per section".
-""")
+generate_query, execute_query = get_agent(groq_api_key)
 
-col1, col2 = st.columns([3, 1])
+# 6. SIDEBAR - SCHEMA & HISTORY
+with st.sidebar:
+    st.subheader("📂 Database Schema")
+    with st.expander("View Tables"):
+        st.code(db.get_table_info(), language="sql")
+    
+    if "history" not in st.session_state:
+        st.session_state.history = []
+    
+    st.subheader("🕒 History")
+    if st.session_state.history:
+        if st.button("Clear Logs"):
+            st.session_state.history = []
+            st.rerun()
+        for q, s in reversed(st.session_state.history[-3:]):
+            st.caption(f"Q: {q}")
 
-with col1:
-    question = st.text_input("Enter your question:", placeholder="e.g., List all students in Section A with marks > 80")
+# 7. MAIN UI LAYOUT
+st.title("📊 Enterprise AI SQL Agent")
+st.info("Directly query your database using natural language.")
 
-if st.button("Refract Query 🌈"):
-    if question:
-        with st.spinner("Refracting logic through the prism..."):
+query_input = st.text_input("Ask your database:", placeholder="e.g., Who is the topper in Section B?")
+
+if st.button("Generate Insights 🚀"):
+    if query_input:
+        with st.spinner("Refracting through the Prism..."):
             try:
-                # A. Generate Query
-                response = generate_query.invoke({"question": question})
+                # A. Intelligence Layer
+                sql_response = generate_query.invoke({"question": query_input})
                 
-                # B. Clean Query
-                cleaned_sql = response.strip()
-                # Robust cleaning for various markdown formats
-                if "```sql" in cleaned_sql:
-                    cleaned_sql = cleaned_sql.split("```sql")[1].split("```")[0].strip()
-                elif "```" in cleaned_sql:
-                    cleaned_sql = cleaned_sql.split("```")[1].split("```")[0].strip()
-                if "SQLQuery:" in cleaned_sql:
-                    cleaned_sql = cleaned_sql.split("SQLQuery:")[1].strip()
-
-                # C. Execute or Auto-Correct
-                engine = create_engine(db_uri)
+                # B. Robust Cleaning
+                clean_sql = sql_response.strip()
+                if "SELECT" in clean_sql.upper():
+                    clean_sql = clean_sql[clean_sql.upper().find("SELECT"):]
+                clean_sql = clean_sql.split(';')[0]
                 
-                try:
-                    # Check if it's a SELECT query (safe to run and show table)
-                    if cleaned_sql.lower().startswith("select"):
-                        pd.read_sql_query(cleaned_sql, engine) 
-                    else:
-                        execute_query.invoke(cleaned_sql)
-                except Exception as e:
-                    # Auto-Correction
-                    fix_prompt = f"The following SQL query failed: {cleaned_sql}\nError: {e}\nRegenerate a correct SQL query for the question: {question}"
-                    response = generate_query.invoke({"question": fix_prompt})
-                    
-                    cleaned_sql = response.strip()
-                    if "```sql" in cleaned_sql:
-                        cleaned_sql = cleaned_sql.split("```sql")[1].split("```")[0].strip()
-                    elif "```" in cleaned_sql:
-                        cleaned_sql = cleaned_sql.split("```")[1].strip()
-                    
-                    st.warning("⚠️ Initial query failed. AI auto-corrected the SQL.")
+                st.session_state.history.append((query_input, clean_sql))
 
-                # D. Save to History
-                st.session_state.history.append((question, cleaned_sql))
+                # C. Display & Tabs
+                st.subheader("🔍 Analysis Result")
+                st.code(clean_sql, language="sql")
                 
-                # E. Show Result
-                st.success("✅ Generated SQL Query:")
-                st.code(cleaned_sql, language="sql")
+                df = pd.read_sql_query(clean_sql, engine)
 
-                if cleaned_sql.lower().startswith("select"):
-                    df = pd.read_sql_query(cleaned_sql, engine)
-                    st.info(f"📊 Query Result ({len(df)} rows found):")
+                if not df.empty:
+                    tab1, tab2 = st.tabs(["📄 Data Preview", "📈 Smart Visualization"])
                     
-                    if not df.empty:
-                        tab1, tab2 = st.tabs(["📄 Data Table", "📈 Visualization"])
+                    with tab1:
+                        st.dataframe(df, use_container_width=True)
+                        st.download_button("📥 Export CSV", df.to_csv(index=False), "export.csv")
+                    
+                    with tab2:
+                        # Logic to prevent visualization errors
+                        nums = df.select_dtypes(include=['number']).columns.tolist()
+                        cats = df.select_dtypes(include=['object']).columns.tolist()
                         
-                        with tab1:
-                            st.dataframe(df, use_container_width=True)
-                            csv = df.to_csv(index=False).encode('utf-8')
-                            st.download_button("📥 Download CSV", data=csv, file_name="query_results.csv", mime="text/csv")
-                        
-                        with tab2:
-                            numeric_df = df.select_dtypes(include=['number'])
-                            if not numeric_df.empty:
-                                st.bar_chart(numeric_df)
+                        if nums:
+                            if cats:
+                                st.bar_chart(df.set_index(cats[0])[nums[0]])
                             else:
-                                st.write("No numeric data available for visualization.")
-                    else:
-                        st.warning("Query executed successfully, but returned 0 results.")
+                                st.bar_chart(df[nums[0]])
+                        else:
+                            st.warning("No numeric data found to plot a chart.")
                 else:
-                    result = execute_query.invoke(cleaned_sql)
-                    st.write(str(result))
-                
+                    st.warning("No records found for this query.")
+                    
             except Exception as e:
-                st.error(f"❌ Error Processing Query: {e}")
+                st.error(f"Execution Error: {e}")
     else:
-        st.warning("Please enter a question first!")
+        st.warning("Please enter a question.")
 
+# 8. FOOTER
 st.markdown("---")
-st.markdown("Built with **LangChain** & **Groq** | Created by Raghav Ramani")
+st.markdown("<h4 style='text-align: center;'>Built with ❤️ by Raghav Ramani</h4>", unsafe_allow_html=True)
+st.center = st.markdown("<p style='text-align: center; color: grey;'>Agentic AI Portfolio Project v1.0</p>", unsafe_allow_html=True)
