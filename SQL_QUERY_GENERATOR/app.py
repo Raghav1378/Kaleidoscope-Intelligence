@@ -1,12 +1,15 @@
 import streamlit as st
 import os
 import pandas as pd
+from dotenv import load_dotenv
+
+# LangChain Imports
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
 from langchain.chains import create_sql_query_chain
-from langchain_community.tools.sql_database.tool import QuerySQLDataBaseTool
+# FIX: Updated import to resolve Deprecation Warning
+from langchain_community.tools import QuerySQLDatabaseTool 
 from sqlalchemy import create_engine
-from langchain_core.prompts import PromptTemplate
 
 # 1. PAGE SETUP
 st.set_page_config(page_title="Prism-SQL", page_icon="💎", layout="wide")
@@ -24,7 +27,6 @@ try:
     default_api_key = st.secrets["GROQ_API_KEY"]
 except (FileNotFoundError, KeyError):
     try:
-        from dotenv import load_dotenv
         load_dotenv()
         default_api_key = os.getenv("GROQ_API_KEY")
     except:
@@ -44,16 +46,15 @@ if not groq_api_key:
     st.stop()
 
 # 4. DATABASE SETUP
-# Create the database file if it doesn't exist (for demo purposes)
 db_path = "student.db"
 
 if not os.path.exists(db_path):
-    # Optional: You can create a dummy DB here if needed, or just warn the user.
-    # For now, we assume you pushed the file.
     st.error(f"❌ Database file '{db_path}' not found! Please ensure 'student.db' is in the repository.")
     st.stop()
 
-db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
+# Connection String
+db_uri = f"sqlite:///{db_path}"
+db = SQLDatabase.from_uri(db_uri)
 
 # 5. SESSION STATE (History)
 if "history" not in st.session_state:
@@ -84,7 +85,8 @@ try:
         temperature=0
     )
     generate_query = create_sql_query_chain(llm, db)
-    execute_query = QuerySQLDataBaseTool(db=db)
+    # FIX: Updated class name to QuerySQLDatabaseTool (capital 'D', lowercase 'b')
+    execute_query = QuerySQLDatabaseTool(db=db)
 except Exception as e:
     st.error(f"❌ Error initializing AI: {e}")
     st.stop()
@@ -109,18 +111,19 @@ if st.button("Refract Query 🌈"):
                 
                 # B. Clean Query
                 cleaned_sql = response.strip()
+                # Robust cleaning for various markdown formats
                 if "```sql" in cleaned_sql:
                     cleaned_sql = cleaned_sql.split("```sql")[1].split("```")[0].strip()
                 elif "```" in cleaned_sql:
-                    cleaned_sql = cleaned_sql.split("```")[1].strip()
+                    cleaned_sql = cleaned_sql.split("```")[1].split("```")[0].strip()
                 if "SQLQuery:" in cleaned_sql:
                     cleaned_sql = cleaned_sql.split("SQLQuery:")[1].strip()
 
-                engine = create_engine(f"sqlite:///{db_path}")
-                
                 # C. Execute or Auto-Correct
+                engine = create_engine(db_uri)
+                
                 try:
-                    # Check if it's a SELECT query (safe to run)
+                    # Check if it's a SELECT query (safe to run and show table)
                     if cleaned_sql.lower().startswith("select"):
                         pd.read_sql_query(cleaned_sql, engine) 
                     else:
@@ -167,7 +170,7 @@ if st.button("Refract Query 🌈"):
                         st.warning("Query executed successfully, but returned 0 results.")
                 else:
                     result = execute_query.invoke(cleaned_sql)
-                    st.write(result)
+                    st.write(str(result))
                 
             except Exception as e:
                 st.error(f"❌ Error Processing Query: {e}")
